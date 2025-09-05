@@ -82,7 +82,7 @@ def process_files(master_bytes: bytes, output_bytes: bytes) -> bytes:
     YELLOW = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 
     # insert masterentity column header at end
-    last_col_index = out_ws.max_column + 1
+    last_col_index = (out_ws.max_column or 0) + 1
     out_ws.cell(row=1, column=last_col_index).value = "masterentity"
 
     exact_count = partial_count = no_match_count = 0
