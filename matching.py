@@ -33,9 +33,9 @@ def find_col_by_lower(df_cols, target_lower):
     raise KeyError(target_lower)
 
 # ---------- Core function ----------
-def process_files(master_bytes: bytes, output_bytes: bytes) -> bytes:
+def process_files(master_bytes: bytes, output_bytes: bytes):
     """
-    master_bytes, output_bytes -> returns bytes of the updated output workbook (xlsx)
+    master_bytes, output_bytes -> returns (bytes, stats_dict)
     """
     t_start = time.time()
 
@@ -75,7 +75,12 @@ def process_files(master_bytes: bytes, output_bytes: bytes) -> bytes:
 
     # Open output workbook via openpyxl (from bytes)
     out_wb = load_workbook(io.BytesIO(output_bytes))
-    out_ws = out_wb.active
+
+    # safely select worksheet
+    if out_wb.worksheets:
+        out_ws = out_wb.active or out_wb.worksheets[0]
+    else:
+        raise ValueError("The uploaded Output Excel has no worksheets. Please upload a valid file.")
 
     # highlight colors
     GREEN = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
@@ -127,14 +132,12 @@ def process_files(master_bytes: bytes, output_bytes: bytes) -> bytes:
 
         # highlight entire row if matched (fill_color set)
         if fill_color:
-            # highlight columns 1..last_col_index (include masterentity cell too)
             for col in range(1, last_col_index + 1):
                 out_ws.cell(row=excel_row, column=col).fill = fill_color
 
-        # progress sampling (not printed to Streamlit console here)
+        # progress sampling
         if (i + 1) % 100 == 0 or (i + 1) == total:
             elapsed = time.time() - t0
-            # simple progress log appended
             log_lines.append(f"Processed {i+1}/{total} rows (elapsed {elapsed:.1f}s)")
 
     # save workbook to bytes
@@ -146,7 +149,6 @@ def process_files(master_bytes: bytes, output_bytes: bytes) -> bytes:
     total_time = time.time() - t_start
     log_lines.append(f"Done in {total_time:.1f}s — exact={exact_count}, partial={partial_count}, no-match={no_match_count}")
 
-    # return bytes and small summary as tuple (we'll return bytes and keep log externally in app)
     return out_bytes, {
         "exact": exact_count,
         "partial": partial_count,
