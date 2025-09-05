@@ -30,11 +30,12 @@ if master_file and output_file:
             st.subheader("Recent log lines")
             st.text("\n".join(stats["log_lines"][-10:]))
 
-        # download button
-    st.download_button(
-    "Download highlighted Output (Excel)",
-    data=result_bytes,
-    file_name=output_file.name,  # keeps same name as uploaded file
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+        # ✅ Keep this inside the block
+        st.download_button(
+            "Download highlighted Output (Excel)",
+            data=result_bytes,
+            file_name=output_file.name,  # use same name as uploaded
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
 
