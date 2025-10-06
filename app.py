@@ -40,10 +40,14 @@ if master_file and output_file:
             st.subheader("Recent log lines")
             st.text("\n".join(stats["log_lines"][-10:]))
 
-        # download processed output (always Excel)
-        st.download_button(
-            "⬇️ Download highlighted Output (Excel)",
-            data=result_bytes,
-            file_name="output_processed.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+      # derive output name based on uploaded file
+base_name = output_file.name.rsplit(".", 1)[0] + ".xlsx"
+
+st.download_button(
+    "⬇️ Download highlighted Output (Excel)",
+    data=result_bytes,
+    file_name=base_name,  # same name as uploaded, but always .xlsx
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
