@@ -33,7 +33,11 @@ def read_uploaded(uploaded_bytes: bytes, filename: str):
     """Read uploaded file (CSV or Excel) into a DataFrame"""
     buffer = BytesIO(uploaded_bytes)
     if filename.lower().endswith(".csv"):
-        return pd.read_csv(buffer, dtype=str)
+        try:
+            return pd.read_csv(buffer, dtype=str, encoding="utf-8")
+        except UnicodeDecodeError:
+            buffer.seek(0)  # reset pointer
+            return pd.read_csv(buffer, dtype=str, encoding="latin1")
     else:
         return pd.read_excel(buffer, dtype=str)
 
@@ -150,3 +154,4 @@ def process_files(master_bytes: bytes, output_bytes: bytes,
     }
 
     return result_buffer, stats
+
