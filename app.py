@@ -1,6 +1,5 @@
 # app.py
 import streamlit as st
-from io import BytesIO
 from matching import process_files
 
 st.set_page_config("Fund Matcher", layout="centered")
@@ -40,14 +39,12 @@ if master_file and output_file:
             st.subheader("Recent log lines")
             st.text("\n".join(stats["log_lines"][-10:]))
 
-      # derive output name based on uploaded file
-base_name = output_file.name.rsplit(".", 1)[0] + ".xlsx"
+        # ✅ derive output name based on uploaded file
+        base_name = output_file.name.rsplit(".", 1)[0] + ".xlsx"
 
-st.download_button(
-    "⬇️ Download highlighted Output (Excel)",
-    data=result_bytes,
-    file_name=base_name,  # same name as uploaded, but always .xlsx
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
-
+        st.download_button(
+            "⬇️ Download highlighted Output (Excel)",
+            data=result_bytes.getvalue(),  # convert BytesIO → raw bytes
+            file_name=base_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
