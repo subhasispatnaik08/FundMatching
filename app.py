@@ -2,8 +2,8 @@
 import streamlit as st
 from matching import process_files
 
-st.set_page_config("Fund Matcher", layout="centered")
-st.title("Fund Matching Tool")
+st.set_page_config("Fund Name Validator", layout="centered")
+st.title("Fund Name Validator")
 
 st.markdown("""
 Upload **Master Fund** and **Output** files (CSV or Excel).  
@@ -48,3 +48,4 @@ if master_file and output_file:
             file_name=base_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
