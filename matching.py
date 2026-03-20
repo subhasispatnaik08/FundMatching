@@ -17,15 +17,17 @@ def normalize_lp_cons(val):
     return collapse_spaces(str(val)).lower()
 
 def normalize_fund(val):
+    # Only collapses spaces and lowercases. Does NOT strip LP/LLC.
+    # LP/LLC handling is done separately via strip_lp_llc and has_lp_llc.
     if val is None:
         return ""
     s = collapse_spaces(str(val))
-    s = re.sub(r'\b(l\.?p\.?|llc)\b\.?$', '', s, flags=re.IGNORECASE).strip()
     return s.lower()
 
 def strip_lp_llc(s: str) -> str:
-    """Remove LP/L.P./LLC/L.L.C from end of fund name for comparison."""
-    s = re.sub(r'[\s,]*(l\.?p\.?|l\.?l\.?c\.?)[\s.]*$', '', s, flags=re.IGNORECASE).strip()
+    """Remove LP/L.P./LLC/L.L.C from end of fund name, then clean trailing commas/punctuation."""
+    s = re.sub(r'[\s,]*(l\.?p\.?|l\.?l\.?c\.?)[\s.,]*$', '', s, flags=re.IGNORECASE).strip()
+    s = re.sub(r'[,.\s]+$', '', s).strip()
     return s
 
 def has_lp_llc(s: str) -> bool:
@@ -166,8 +168,8 @@ def process_files(master_bytes: bytes, output_bytes: bytes,
                     log_lines.append(f"Row {excel_row} | Partial (LP mismatch) -> {matched_original_fund}")
                     break
 
-                # Substring fallback partial
-                if fund and cand_norm and (fund in cand_norm or cand_norm in fund):
+                # Substring fallback partial — use stripped names (no LP/LLC) for comparison
+                if f_stripped and cand_stripped and (f_stripped in cand_stripped or cand_stripped in f_stripped):
                     matched_original_fund = cand_orig
                     fill_color = YELLOW
                     flag_value = "Partial"
