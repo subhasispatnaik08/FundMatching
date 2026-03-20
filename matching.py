@@ -89,7 +89,10 @@ def process_files(master_bytes: bytes, output_bytes: bytes,
         master_lp_norm, master_fund_norm, master_fund_stripped,
         master_fund_has_lp, master_cons_norm, master_fund_orig
     ):
-        exact_map[(lp_n, fund_n, cons_n)] = fund_orig
+        # Exact key uses stripped fund name + LP/LLC presence flag
+        # So "Blackrock L.P." and "Blackrock LP" both map to same exact key (same stripped name, both have LP)
+        # But "Blackrock LP" vs "Blackrock" differ on has_lp -> won't exact match -> falls to partial
+        exact_map[(lp_n, fund_stripped, cons_n, fund_has_lp)] = fund_orig
         funds_by_lp_cons[(lp_n, cons_n)].append((fund_n, fund_stripped, fund_has_lp, fund_orig))
 
     # ---------- Normalize output ----------
@@ -139,8 +142,11 @@ def process_files(master_bytes: bytes, output_bytes: bytes,
         flag_value = None
 
         # --- Exact match ---
-        if (lp, fund, cons) in exact_map:
-            matched_original_fund = exact_map[(lp, fund, cons)]
+        # Stripped names match AND LP/LLC presence is same on both sides
+        # e.g. "Blackrock L.P." vs "Blackrock LP" -> both stripped to "blackrock", both have LP -> Exact
+        # e.g. "Blackrock LP" vs "Blackrock"      -> stripped names match but LP flag differs -> Partial
+        if (lp, f_stripped, cons, f_has_lp) in exact_map:
+            matched_original_fund = exact_map[(lp, f_stripped, cons, f_has_lp)]
             fill_color = GREEN
             flag_value = "Exact"
             exact_count += 1
