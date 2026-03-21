@@ -194,7 +194,7 @@ if master_file:
             else pd.read_excel(BytesIO(master_file.read()), nrows=5, dtype=str)
         master_file.seek(0)
         st.markdown('<div class="fnv-preview-label">Preview — first 5 rows</div>', unsafe_allow_html=True)
-        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        st.dataframe(preview_df, width='stretch', hide_index=True)
     except Exception:
         pass
 
@@ -215,7 +215,7 @@ if output_file:
             else pd.read_excel(BytesIO(output_file.read()), nrows=5, dtype=str)
         output_file.seek(0)
         st.markdown('<div class="fnv-preview-label">Preview — first 5 rows</div>', unsafe_allow_html=True)
-        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        st.dataframe(preview_df, width='stretch', hide_index=True)
     except Exception:
         pass
 
