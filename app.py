@@ -229,14 +229,15 @@ if run_clicked and master_file and output_file:
     thread.start()
 
     # Single random message for the entire run
+    # Loading bar renders into results_slot — same placeholder as stats,
+    # so it appears ABOVE the run button from the moment the user clicks
     run_msg = random.choice(LOADING_MESSAGES)
-    loading_slot = st.empty()
     tick = 0
     FAKE_DURATION = 8
 
     while not result_container["done"]:
         pct = min(int((tick / FAKE_DURATION) * 90), 90)
-        loading_slot.markdown(f"""
+        results_slot.markdown(f"""
         <div class="fnv-loading">
           <div class="fnv-loading-msg">{run_msg}</div>
           <div class="fnv-progress-bar-bg">
@@ -248,8 +249,8 @@ if run_clicked and master_file and output_file:
         time.sleep(1)
         tick += 1
 
-    # Snap to 100% then clear
-    loading_slot.markdown(f"""
+    # Snap to 100% then let results overwrite this slot
+    results_slot.markdown(f"""
     <div class="fnv-loading">
       <div class="fnv-loading-msg">{run_msg}</div>
       <div class="fnv-progress-bar-bg">
@@ -259,7 +260,6 @@ if run_clicked and master_file and output_file:
     </div>
     """, unsafe_allow_html=True)
     time.sleep(0.6)
-    loading_slot.empty()
 
     if result_container["error"]:
         st.error(f"Something went wrong: {result_container['error']}")
