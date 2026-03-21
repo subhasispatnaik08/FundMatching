@@ -71,12 +71,6 @@ st.markdown("""
   [data-testid="stFileUploader"] label { display: none; }
   [data-testid="stFileUploaderDropzone"] { background: transparent !important; border: none !important; }
 
-  /* Preview table */
-  .fnv-preview-label {
-    font-size: 11px; font-weight: 700; color: #b4b2a9;
-    letter-spacing: 0.07em; text-transform: uppercase;
-    margin: 0.8rem 0 0.4rem;
-  }
 
   /* Threshold section */
   .fnv-threshold-card {
@@ -185,19 +179,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 master_file = st.file_uploader("master", type=["csv", "xlsx"], label_visibility="collapsed")
 
-if master_file:
-    import pandas as pd
-    from io import BytesIO
-    try:
-        preview_df = pd.read_csv(BytesIO(master_file.read()), nrows=5, dtype=str) \
-            if master_file.name.endswith(".csv") \
-            else pd.read_excel(BytesIO(master_file.read()), nrows=5, dtype=str)
-        master_file.seek(0)
-        st.markdown('<div class="fnv-preview-label">Preview — first 5 rows</div>', unsafe_allow_html=True)
-        st.dataframe(preview_df, width='stretch', hide_index=True)
-    except Exception:
-        pass
-
 st.markdown("""
 <div class="fnv-step-row">
   <div class="fnv-step-num">2</div>
@@ -205,19 +186,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 output_file = st.file_uploader("output", type=["csv", "xlsx"], label_visibility="collapsed")
-
-if output_file:
-    import pandas as pd
-    from io import BytesIO
-    try:
-        preview_df = pd.read_csv(BytesIO(output_file.read()), nrows=5, dtype=str) \
-            if output_file.name.endswith(".csv") \
-            else pd.read_excel(BytesIO(output_file.read()), nrows=5, dtype=str)
-        output_file.seek(0)
-        st.markdown('<div class="fnv-preview-label">Preview — first 5 rows</div>', unsafe_allow_html=True)
-        st.dataframe(preview_df, width='stretch', hide_index=True)
-    except Exception:
-        pass
 
 # ── Similarity threshold slider ──────────────────────────
 st.markdown('<div class="fnv-divider"></div>', unsafe_allow_html=True)
@@ -291,8 +259,8 @@ if run_clicked and master_file and output_file:
         </div>
         """, unsafe_allow_html=True)
 
-        time.sleep(1.2)
-        tick += 1.2
+        time.sleep(3)
+        tick += 3
         msg_index += 1
 
     # Snap to 100%
