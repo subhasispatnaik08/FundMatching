@@ -1,5 +1,6 @@
 # app.py
 import time
+import random
 import threading
 import streamlit as st
 from matching import process_files, PARTIAL_SIMILARITY_THRESHOLD
@@ -208,6 +209,9 @@ with st.expander("⚙️  Advanced — similarity threshold", expanded=False):
     col2.caption(f"← current: {threshold}")
     col3.caption("1.00 — strict")
 
+# ── Results placeholder (renders above run button) ──────
+results_slot = st.empty()
+
 # ── Run button ───────────────────────────────────────────
 run_clicked = st.button("Run validation", disabled=not (master_file and output_file))
 
@@ -237,31 +241,27 @@ if run_clicked and master_file and output_file:
     thread = threading.Thread(target=run_matching)
     thread.start()
 
-    # Animated loading UI
-    loading_slot = st.empty()
-    progress_slot = st.empty()
+    # Pick one random message for this entire run
+    run_msg = random.choice(LOADING_MESSAGES)
 
-    msg_index = 0
+    loading_slot = st.empty()
+
     tick = 0
     FAKE_DURATION = 8   # seconds over which progress bar fills to ~90%
 
     while not result_container["done"]:
         pct = min(int((tick / FAKE_DURATION) * 90), 90)
-        msg = LOADING_MESSAGES[msg_index % len(LOADING_MESSAGES)]
-
         loading_slot.markdown(f"""
         <div class="fnv-loading">
-          <div class="fnv-loading-msg">{msg}</div>
+          <div class="fnv-loading-msg">{run_msg}</div>
           <div class="fnv-progress-bar-bg">
             <div class="fnv-progress-bar-fill" style="width:{pct}%"></div>
           </div>
           <div class="fnv-loading-pct">{pct}% done — hang tight…</div>
         </div>
         """, unsafe_allow_html=True)
-
-        time.sleep(3)
-        tick += 3
-        msg_index += 1
+        time.sleep(1)
+        tick += 1
 
     # Snap to 100%
     loading_slot.markdown("""
@@ -275,57 +275,53 @@ if run_clicked and master_file and output_file:
     """, unsafe_allow_html=True)
     time.sleep(0.8)
     loading_slot.empty()
-    progress_slot.empty()
 
     if result_container["error"]:
         st.error(f"Something went wrong: {result_container['error']}")
         st.stop()
 
     result_bytes, stats = result_container["result"]
-
-    # Success banner
     elapsed = stats.get("elapsed", 0)
-    st.markdown(
-        f'<div class="fnv-success">Matching complete — {stats["rows"]:,} rows processed in {elapsed:.1f}s. Your file is ready.</div>',
-        unsafe_allow_html=True
-    )
-
-    # Stat cards — now includes total rows + elapsed
-    st.markdown(f"""
-    <div class="fnv-stats-row">
-      <div class="fnv-stat">
-        <div class="fnv-stat-label">Total rows</div>
-        <div class="fnv-stat-val total">{stats['rows']:,}</div>
-        <div class="fnv-stat-sub">in {elapsed:.1f}s</div>
-      </div>
-      <div class="fnv-stat">
-        <div class="fnv-stat-label">Exact match</div>
-        <div class="fnv-stat-val exact">{stats['exact']:,}</div>
-        <div class="fnv-stat-sub">{stats['exact']/stats['rows']*100:.1f}% of rows</div>
-      </div>
-      <div class="fnv-stat">
-        <div class="fnv-stat-label">Partial match</div>
-        <div class="fnv-stat-val partial">{stats['partial']:,}</div>
-        <div class="fnv-stat-sub">{stats['partial']/stats['rows']*100:.1f}% of rows</div>
-      </div>
-      <div class="fnv-stat">
-        <div class="fnv-stat-label">No match</div>
-        <div class="fnv-stat-val nomatch">{stats['nomatch']:,}</div>
-        <div class="fnv-stat-sub">{stats['nomatch']/stats['rows']*100:.1f}% of rows</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Download
     base_name = output_file.name.rsplit(".", 1)[0] + "_matched.xlsx"
-    st.download_button(
-        "Download highlighted output (Excel)",
-        data=result_bytes.getvalue(),
-        file_name=base_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
 
-    # Log expander
-    if stats.get("log_lines"):
-        with st.expander("View recent log lines"):
-            st.text("\n".join(stats["log_lines"][-20:]))
+    # Render stats + download into the placeholder ABOVE the run button
+    with results_slot.container():
+        st.markdown(
+            f'<div class="fnv-success">Matching complete — {stats["rows"]:,} rows processed in {elapsed:.1f}s. Your file is ready.</div>',
+            unsafe_allow_html=True
+        )
+        st.markdown(f"""
+        <div class="fnv-stats-row">
+          <div class="fnv-stat">
+            <div class="fnv-stat-label">Total rows</div>
+            <div class="fnv-stat-val total">{stats['rows']:,}</div>
+            <div class="fnv-stat-sub">in {elapsed:.1f}s</div>
+          </div>
+          <div class="fnv-stat">
+            <div class="fnv-stat-label">Exact match</div>
+            <div class="fnv-stat-val exact">{stats['exact']:,}</div>
+            <div class="fnv-stat-sub">{stats['exact']/stats['rows']*100:.1f}% of rows</div>
+          </div>
+          <div class="fnv-stat">
+            <div class="fnv-stat-label">Partial match</div>
+            <div class="fnv-stat-val partial">{stats['partial']:,}</div>
+            <div class="fnv-stat-sub">{stats['partial']/stats['rows']*100:.1f}% of rows</div>
+          </div>
+          <div class="fnv-stat">
+            <div class="fnv-stat-label">No match</div>
+            <div class="fnv-stat-val nomatch">{stats['nomatch']:,}</div>
+            <div class="fnv-stat-sub">{stats['nomatch']/stats['rows']*100:.1f}% of rows</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.download_button(
+            "Download highlighted output (Excel)",
+            data=result_bytes.getvalue(),
+            file_name=base_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        if stats.get("log_lines"):
+            with st.expander("View recent log lines"):
+                st.text("\n".join(stats["log_lines"][-20:]))
