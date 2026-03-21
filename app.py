@@ -9,18 +9,19 @@ st.set_page_config("Fund Name Validator", layout="centered")
 
 # ── Funny loading messages ───────────────────────────────
 LOADING_MESSAGES = [
-    "Sit back, relax — we've got this. ☕",
-    "Hang on, incoming files… don't panic.",
+    "Sit back, relax — we've got this ☕",
+    "Hang on, incoming files… don't panic..",
     "Teaching the algorithm to read fund names… slowly.",
-    "LP or not LP, that is the question.",
-    "Matching in progress. Please do not turn off your brain.",
+    "Your patience is appreciated...",
+    "If this were Excel, it would've crashed by now.",
     "We promise this is faster than doing it manually.",
-    "Running at full speed. (The speed of coffee.)",
-    "This is fine. Everything is fine. 🔥",
+    "Good things come to those who wait. This is one of them.",
+    "This is fine. Everything is fine 🔥",
     "Asking the data nicely to cooperate…",
     "Almost there. Probably. We think.",
     "The algorithm is giving it everything it's got.",
     "Fun fact: this is still faster than a VLOOKUP.",
+    "Matching funds so you don't have to. You're welcome."
 ]
 
 st.markdown("""
@@ -267,7 +268,7 @@ if run_clicked and master_file and output_file:
 
     result_bytes, stats = result_container["result"]
     elapsed = stats.get("elapsed", 0)
-    base_name = output_file.name.rsplit(".", 1)[0] + "_matched.xlsx"
+    base_name = output_file.name.rsplit(".", 1)[0] + ".xlsx"
 
     # Render results into placeholder ABOVE the run button
     with results_slot.container():
