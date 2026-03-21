@@ -1,244 +1,363 @@
-# matching.py
-import re
+# app.py
 import time
-import pandas as pd
-from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
-from collections import defaultdict
+import threading
+import streamlit as st
+from matching import process_files, PARTIAL_SIMILARITY_THRESHOLD
 
-# ---------- Similarity threshold for partial match ----------
-# Word-level Jaccard similarity must be >= this value to qualify as Partial.
-# Keeps false positives like "Fund IV" vs "Fund I" or missing prefixes as No Match.
-PARTIAL_SIMILARITY_THRESHOLD = 0.75
+st.set_page_config("Fund Name Validator", layout="centered")
 
-# Stopwords excluded from word overlap calculation
-STOPWORDS = {"fund", "the", "of", "and", "a", "an", "for", "by", "in", "at"}
+# ── Funny loading messages ───────────────────────────────
+LOADING_MESSAGES = [
+    "Sit back, relax — we've got this. ☕",
+    "Hang on, incoming files… don't panic.",
+    "Teaching the algorithm to read fund names… slowly.",
+    "LP or not LP, that is the question.",
+    "Matching in progress. Please do not turn off your brain.",
+    "We promise this is faster than doing it manually.",
+    "Running at full speed. (The speed of coffee.)",
+    "This is fine. Everything is fine. 🔥",
+    "Asking the data nicely to cooperate…",
+    "Almost there. Probably. We think.",
+    "The algorithm is giving it everything it's got.",
+    "Fun fact: this is still faster than a VLOOKUP.",
+]
 
-# ---------- Normalization helpers ----------
-def collapse_spaces(s: str) -> str:
-    return re.sub(r'\s+', ' ', s).strip()
+st.markdown("""
+<style>
+  .stApp { background: #f8f8f6; }
+  .block-container { max-width: 740px; padding-top: 2.5rem; padding-bottom: 3rem; }
+  #MainMenu, footer, header { visibility: hidden; }
 
-def normalize_lp_cons(val):
-    if val is None:
-        return ""
-    return collapse_spaces(str(val)).lower()
+  .fnv-badge {
+    display: inline-block;
+    background: #e6f1fb; color: #185fa5;
+    font-size: 11px; font-weight: 600;
+    padding: 4px 12px; border-radius: 6px;
+    border: 1px solid #b5d4f4;
+    letter-spacing: 0.05em; margin-bottom: 0.6rem;
+  }
+  .fnv-title { font-size: 28px; font-weight: 700; color: #1c1c1a; margin: 0.2rem 0 0.4rem; }
+  .fnv-sub   { font-size: 14px; color: #646460; margin-bottom: 1.6rem; line-height: 1.6; }
 
-def normalize_fund(val):
-    # Only collapses spaces and lowercases. Does NOT strip LP/LLC.
-    # LP/LLC handling is done separately via strip_lp_llc and has_lp_llc.
-    if val is None:
-        return ""
-    s = collapse_spaces(str(val))
-    return s.lower()
+  .fnv-schema-row { display: flex; gap: 12px; margin-bottom: 1.6rem; }
+  .fnv-schema-card {
+    flex: 1; background: #ffffff;
+    border: 1px solid #d2d0ca; border-radius: 10px; padding: 12px 14px;
+  }
+  .fnv-schema-label {
+    font-size: 10px; font-weight: 700; color: #b4b2a9;
+    letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  .fnv-pill {
+    display: inline-block; font-size: 11.5px; font-family: monospace;
+    background: #f1efe8; border: 1px solid #c3c1bb; border-radius: 5px;
+    padding: 3px 9px; margin: 2px 3px 2px 0; color: #185fa5;
+  }
 
-def strip_lp_llc(s: str) -> str:
-    """Remove LP/L.P./LLC/L.L.C from end of fund name, then clean trailing commas/punctuation."""
-    s = re.sub(r'[\s,]*(l\.?p\.?|l\.?l\.?c\.?)[\s.,]*$', '', s, flags=re.IGNORECASE).strip()
-    s = re.sub(r'[,.\s]+$', '', s).strip()
-    return s
+  .fnv-step-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; margin-top: 0.5rem; }
+  .fnv-step-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #e6f1fb; color: #185fa5;
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .fnv-step-label { font-size: 13px; font-weight: 600; color: #1c1c1a; }
 
-def has_lp_llc(s: str) -> bool:
-    """Check if fund name contains LP or LLC (in any common format)."""
-    return bool(re.search(r'\b(l\.?p\.?|l\.?l\.?c\.?)\b', s, flags=re.IGNORECASE))
+  [data-testid="stFileUploader"] {
+    background: #ffffff; border: 1.5px dashed #c3c1bb;
+    border-radius: 10px; padding: 8px 4px; transition: border-color 0.15s;
+  }
+  [data-testid="stFileUploader"]:hover { border-color: #185fa5; background: #f0f6fd; }
+  [data-testid="stFileUploader"] label { display: none; }
+  [data-testid="stFileUploaderDropzone"] { background: transparent !important; border: none !important; }
 
-def tokenize(s: str) -> list:
-    """Split into lowercase alphanumeric tokens, excluding stopwords."""
-    tokens = re.findall(r'[a-z0-9]+', s.lower())
-    return [t for t in tokens if t not in STOPWORDS]
+  /* Preview table */
+  .fnv-preview-label {
+    font-size: 11px; font-weight: 700; color: #b4b2a9;
+    letter-spacing: 0.07em; text-transform: uppercase;
+    margin: 0.8rem 0 0.4rem;
+  }
 
-def word_jaccard(a: str, b: str) -> float:
-    """
-    Word-level Jaccard similarity between two strings.
-    Jaccard = |intersection| / |union| of unique word sets.
-    Returns 0.0 if either string is empty.
-    """
-    sa, sb = set(tokenize(a)), set(tokenize(b))
-    if not sa or not sb:
-        return 0.0
-    return len(sa & sb) / len(sa | sb)
+  /* Threshold section */
+  .fnv-threshold-card {
+    background: #ffffff; border: 1px solid #d2d0ca;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 1rem;
+  }
+  .fnv-threshold-title { font-size: 13px; font-weight: 600; color: #1c1c1a; margin-bottom: 2px; }
+  .fnv-threshold-hint  { font-size: 12px; color: #888780; margin-bottom: 0; }
 
-def find_column_ignore_case(df, target_lower):
-    for col in df.columns:
-        if str(col).strip().lower() == target_lower:
-            return col
-    raise KeyError(f"Column '{target_lower}' not found.")
+  .fnv-divider { height: 1px; background: #d2d0ca; margin: 1.4rem 0 1.2rem; }
 
-def read_uploaded(uploaded_bytes: bytes, filename: str):
-    """Read uploaded file (CSV or Excel) into a DataFrame"""
-    buffer = BytesIO(uploaded_bytes)
-    if filename.lower().endswith(".csv"):
+  .stButton > button {
+    width: 100%; background: #1c1c1a !important; color: #ffffff !important;
+    border: none !important; border-radius: 8px !important; padding: 12px !important;
+    font-size: 14px !important; font-weight: 600 !important;
+    letter-spacing: 0.01em; transition: opacity 0.15s !important;
+  }
+  .stButton > button:hover  { opacity: 0.85 !important; }
+  .stButton > button:active { transform: scale(0.99); }
+
+  /* Loading box */
+  .fnv-loading {
+    background: #ffffff; border: 1px solid #d2d0ca; border-radius: 10px;
+    padding: 20px 20px 14px; margin-top: 1rem; text-align: center;
+  }
+  .fnv-loading-msg  { font-size: 14px; font-weight: 600; color: #1c1c1a; margin-bottom: 10px; }
+  .fnv-loading-pct  { font-size: 12px; color: #888780; margin-top: 8px; }
+  .fnv-progress-bar-bg {
+    background: #f1efe8; border-radius: 99px; height: 6px; overflow: hidden; margin: 6px 0;
+  }
+  .fnv-progress-bar-fill {
+    height: 6px; border-radius: 99px; background: #185fa5; transition: width 0.4s ease;
+  }
+
+  /* Stat cards */
+  .fnv-stats-row { display: flex; gap: 10px; margin-top: 1.4rem; }
+  .fnv-stat {
+    flex: 1; background: #ffffff;
+    border: 1px solid #d2d0ca; border-radius: 10px; padding: 14px 16px;
+  }
+  .fnv-stat-label {
+    font-size: 11px; color: #b4b2a9; margin-bottom: 2px;
+    font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .fnv-stat-val  { font-size: 26px; font-weight: 700; }
+  .fnv-stat-sub  { font-size: 11px; color: #b4b2a9; margin-top: 2px; }
+  .fnv-stat-val.exact   { color: #3b6d11; }
+  .fnv-stat-val.partial { color: #ba7517; }
+  .fnv-stat-val.nomatch { color: #a32d2d; }
+  .fnv-stat-val.total   { color: #1c1c1a; }
+
+  .fnv-success {
+    background: #eaf3de; border: 1px solid #98d078; border-radius: 8px;
+    padding: 10px 16px; font-size: 13px; color: #3b6d11;
+    font-weight: 600; margin-top: 1rem;
+  }
+
+  [data-testid="stDownloadButton"] > button {
+    width: 100%; background: #ffffff !important; color: #185fa5 !important;
+    border: 1px solid #b5d4f4 !important; border-radius: 8px !important;
+    font-size: 13px !important; font-weight: 600 !important;
+    margin-top: 0.6rem; transition: background 0.15s !important;
+  }
+  [data-testid="stDownloadButton"] > button:hover { background: #e6f1fb !important; }
+
+  .stExpander {
+    border: 1px solid #d2d0ca !important;
+    border-radius: 8px !important; background: #ffffff !important; margin-top: 0.8rem;
+  }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── Header ──────────────────────────────────────────────
+st.markdown('<div class="fnv-badge">Fund Name Validator</div>', unsafe_allow_html=True)
+st.markdown('<div class="fnv-title">Match &amp; validate fund names</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="fnv-sub">Upload your master and output files to reconcile fund names and flag discrepancies.</div>',
+    unsafe_allow_html=True
+)
+
+# ── Schema cards ────────────────────────────────────────
+st.markdown("""
+<div class="fnv-schema-row">
+  <div class="fnv-schema-card">
+    <div class="fnv-schema-label">Master file expects</div>
+    <span class="fnv-pill">lp name</span>
+    <span class="fnv-pill">fund name</span>
+    <span class="fnv-pill">consultant</span>
+  </div>
+  <div class="fnv-schema-card">
+    <div class="fnv-schema-label">Output file expects</div>
+    <span class="fnv-pill">lpname</span>
+    <span class="fnv-pill">fundname</span>
+    <span class="fnv-pill">reportingconsultant</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── File uploaders ───────────────────────────────────────
+st.markdown("""
+<div class="fnv-step-row">
+  <div class="fnv-step-num">1</div>
+  <div class="fnv-step-label">Upload master fund file</div>
+</div>
+""", unsafe_allow_html=True)
+master_file = st.file_uploader("master", type=["csv", "xlsx"], label_visibility="collapsed")
+
+if master_file:
+    import pandas as pd
+    from io import BytesIO
+    try:
+        preview_df = pd.read_csv(BytesIO(master_file.read()), nrows=5, dtype=str) \
+            if master_file.name.endswith(".csv") \
+            else pd.read_excel(BytesIO(master_file.read()), nrows=5, dtype=str)
+        master_file.seek(0)
+        st.markdown('<div class="fnv-preview-label">Preview — first 5 rows</div>', unsafe_allow_html=True)
+        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+    except Exception:
+        pass
+
+st.markdown("""
+<div class="fnv-step-row">
+  <div class="fnv-step-num">2</div>
+  <div class="fnv-step-label">Upload output file</div>
+</div>
+""", unsafe_allow_html=True)
+output_file = st.file_uploader("output", type=["csv", "xlsx"], label_visibility="collapsed")
+
+if output_file:
+    import pandas as pd
+    from io import BytesIO
+    try:
+        preview_df = pd.read_csv(BytesIO(output_file.read()), nrows=5, dtype=str) \
+            if output_file.name.endswith(".csv") \
+            else pd.read_excel(BytesIO(output_file.read()), nrows=5, dtype=str)
+        output_file.seek(0)
+        st.markdown('<div class="fnv-preview-label">Preview — first 5 rows</div>', unsafe_allow_html=True)
+        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+    except Exception:
+        pass
+
+# ── Similarity threshold slider ──────────────────────────
+st.markdown('<div class="fnv-divider"></div>', unsafe_allow_html=True)
+
+with st.expander("⚙️  Advanced — similarity threshold", expanded=False):
+    st.markdown("""
+    <div class="fnv-threshold-hint">
+    Controls how similar two fund names must be for a <b>Partial</b> match.<br>
+    Higher = stricter (fewer partials). Lower = more lenient (more partials).<br>
+    Default is <b>0.75</b> — recommended for most cases.
+    </div>
+    """, unsafe_allow_html=True)
+    threshold = st.slider(
+        "Similarity threshold",
+        min_value=0.50, max_value=1.00, value=PARTIAL_SIMILARITY_THRESHOLD,
+        step=0.05, label_visibility="collapsed"
+    )
+    col1, col2, col3 = st.columns(3)
+    col1.caption("0.50 — lenient")
+    col2.caption(f"← current: {threshold}")
+    col3.caption("1.00 — strict")
+
+# ── Run button ───────────────────────────────────────────
+run_clicked = st.button("Run validation", disabled=not (master_file and output_file))
+
+# ── Processing ───────────────────────────────────────────
+if run_clicked and master_file and output_file:
+    master_bytes = master_file.read()
+    output_bytes = output_file.read()
+
+    # Shared state for threading
+    result_container = {}
+    result_container["done"] = False
+    result_container["result"] = None
+    result_container["error"] = None
+
+    def run_matching():
         try:
-            return pd.read_csv(buffer, dtype=str, encoding="utf-8")
-        except UnicodeDecodeError:
-            buffer.seek(0)  # reset pointer
-            return pd.read_csv(buffer, dtype=str, encoding="latin1")
-    else:
-        return pd.read_excel(buffer, dtype=str)
+            result_container["result"] = process_files(
+                master_bytes, output_bytes,
+                master_file.name, output_file.name,
+                similarity_threshold=threshold
+            )
+        except Exception as e:
+            result_container["error"] = str(e)
+        finally:
+            result_container["done"] = True
 
-def process_files(master_bytes: bytes, output_bytes: bytes,
-                  master_filename: str = "master.xlsx",
-                  output_filename: str = "output.xlsx"):
-    """
-    Run fund matching.
-    Inputs: file bytes + filenames (to detect CSV vs Excel).
-    Returns: (BytesIO result_xlsx, stats dict)
+    thread = threading.Thread(target=run_matching)
+    thread.start()
 
-    Matching logic:
-    - Exact:   stripped fund names match AND LP/LLC presence is the same on both sides
-    - Partial: LP/LLC mismatch only (stripped names equal, but one has LP and other doesn't)
-               OR word-level Jaccard similarity >= PARTIAL_SIMILARITY_THRESHOLD
-    - No Match: everything else
-    """
+    # Animated loading UI
+    loading_slot = st.empty()
+    progress_slot = st.empty()
 
-    # ---------- Read DataFrames ----------
-    master_orig = read_uploaded(master_bytes, master_filename)
-    output_orig = read_uploaded(output_bytes, output_filename)
+    msg_index = 0
+    tick = 0
+    FAKE_DURATION = 8   # seconds over which progress bar fills to ~90%
 
-    # ---------- Locate required columns ----------
-    master_lp_col  = find_column_ignore_case(master_orig, "lp name")
-    master_fund_col = find_column_ignore_case(master_orig, "fund name")
-    master_cons_col = find_column_ignore_case(master_orig, "consultant")
+    while not result_container["done"]:
+        pct = min(int((tick / FAKE_DURATION) * 90), 90)
+        msg = LOADING_MESSAGES[msg_index % len(LOADING_MESSAGES)]
 
-    output_lp_col  = find_column_ignore_case(output_orig, "lpname")
-    output_fund_col = find_column_ignore_case(output_orig, "fundname")
-    output_cons_col = find_column_ignore_case(output_orig, "reportingconsultant")
+        loading_slot.markdown(f"""
+        <div class="fnv-loading">
+          <div class="fnv-loading-msg">{msg}</div>
+          <div class="fnv-progress-bar-bg">
+            <div class="fnv-progress-bar-fill" style="width:{pct}%"></div>
+          </div>
+          <div class="fnv-loading-pct">{pct}% done — hang tight…</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ---------- Build normalized master structures ----------
-    master_lp_norm   = master_orig[master_lp_col].fillna("").apply(normalize_lp_cons)
-    master_fund_norm = master_orig[master_fund_col].fillna("").apply(normalize_fund)
-    master_cons_norm = master_orig[master_cons_col].fillna("").apply(normalize_lp_cons)
-    master_fund_orig = master_orig[master_fund_col].fillna("").astype(str)
+        time.sleep(1.2)
+        tick += 1.2
+        msg_index += 1
 
-    # LP/LLC-aware structures
-    master_fund_raw      = master_orig[master_fund_col].fillna("").astype(str)
-    master_fund_stripped = master_fund_raw.apply(lambda v: strip_lp_llc(normalize_fund(v)))
-    master_fund_has_lp   = master_fund_raw.apply(lambda v: has_lp_llc(str(v)))
+    # Snap to 100%
+    loading_slot.markdown("""
+    <div class="fnv-loading">
+      <div class="fnv-loading-msg">Done! That wasn't so bad, was it? 🎉</div>
+      <div class="fnv-progress-bar-bg">
+        <div class="fnv-progress-bar-fill" style="width:100%"></div>
+      </div>
+      <div class="fnv-loading-pct">100% — your file is ready.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    time.sleep(0.8)
+    loading_slot.empty()
+    progress_slot.empty()
 
-    exact_map        = {}
-    funds_by_lp_cons = defaultdict(list)
-    for lp_n, fund_n, fund_stripped, fund_has_lp, cons_n, fund_orig in zip(
-        master_lp_norm, master_fund_norm, master_fund_stripped,
-        master_fund_has_lp, master_cons_norm, master_fund_orig
-    ):
-        # Exact key: stripped fund + LP/LLC presence flag
-        # "Blackrock L.P." and "Blackrock LP" -> same stripped name, both have LP -> Exact
-        # "Blackrock LP" vs "Blackrock"        -> LP flag differs -> falls to Partial
-        exact_map[(lp_n, fund_stripped, cons_n, fund_has_lp)] = fund_orig
-        funds_by_lp_cons[(lp_n, cons_n)].append((fund_n, fund_stripped, fund_has_lp, fund_orig))
+    if result_container["error"]:
+        st.error(f"Something went wrong: {result_container['error']}")
+        st.stop()
 
-    # ---------- Normalize output ----------
-    output_lp_norm   = output_orig[output_lp_col].fillna("").apply(normalize_lp_cons).tolist()
-    output_fund_norm = output_orig[output_fund_col].fillna("").apply(normalize_fund).tolist()
-    output_cons_norm = output_orig[output_cons_col].fillna("").apply(normalize_lp_cons).tolist()
+    result_bytes, stats = result_container["result"]
 
-    output_fund_raw      = output_orig[output_fund_col].fillna("").astype(str).tolist()
-    output_fund_stripped = [strip_lp_llc(normalize_fund(v)) for v in output_fund_raw]
-    output_fund_has_lp   = [has_lp_llc(v) for v in output_fund_raw]
+    # Success banner
+    elapsed = stats.get("elapsed", 0)
+    st.markdown(
+        f'<div class="fnv-success">Matching complete — {stats["rows"]:,} rows processed in {elapsed:.1f}s. Your file is ready.</div>',
+        unsafe_allow_html=True
+    )
 
-    # ---------- Create workbook ----------
-    tmp_buffer = BytesIO()
-    output_orig.to_excel(tmp_buffer, index=False)
-    tmp_buffer.seek(0)
-    wb = load_workbook(tmp_buffer)
-    ws = wb.active
+    # Stat cards — now includes total rows + elapsed
+    st.markdown(f"""
+    <div class="fnv-stats-row">
+      <div class="fnv-stat">
+        <div class="fnv-stat-label">Total rows</div>
+        <div class="fnv-stat-val total">{stats['rows']:,}</div>
+        <div class="fnv-stat-sub">in {elapsed:.1f}s</div>
+      </div>
+      <div class="fnv-stat">
+        <div class="fnv-stat-label">Exact match</div>
+        <div class="fnv-stat-val exact">{stats['exact']:,}</div>
+        <div class="fnv-stat-sub">{stats['exact']/stats['rows']*100:.1f}% of rows</div>
+      </div>
+      <div class="fnv-stat">
+        <div class="fnv-stat-label">Partial match</div>
+        <div class="fnv-stat-val partial">{stats['partial']:,}</div>
+        <div class="fnv-stat-sub">{stats['partial']/stats['rows']*100:.1f}% of rows</div>
+      </div>
+      <div class="fnv-stat">
+        <div class="fnv-stat-label">No match</div>
+        <div class="fnv-stat-val nomatch">{stats['nomatch']:,}</div>
+        <div class="fnv-stat-sub">{stats['nomatch']/stats['rows']*100:.1f}% of rows</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    GREEN  = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    YELLOW = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-    RED    = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    # Download
+    base_name = output_file.name.rsplit(".", 1)[0] + "_matched.xlsx"
+    st.download_button(
+        "Download highlighted output (Excel)",
+        data=result_bytes.getvalue(),
+        file_name=base_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-    masterentity_col = ws.max_column + 1
-    flag_col         = masterentity_col + 1
-
-    ws.cell(row=1, column=masterentity_col).value = "masterentity"
-    ws.cell(row=1, column=flag_col).value         = "flag"
-
-    exact_count    = 0
-    partial_count  = 0
-    no_match_count = 0
-    log_lines      = []
-
-    total = len(output_orig)
-    t0    = time.time()
-
-    for i in range(total):
-        excel_row  = i + 2
-        lp         = output_lp_norm[i]
-        fund       = output_fund_norm[i]
-        cons       = output_cons_norm[i]
-        f_stripped = output_fund_stripped[i]
-        f_has_lp   = output_fund_has_lp[i]
-
-        matched_original_fund = None
-        fill_color            = None
-        flag_value            = None
-
-        # --- Exact match ---
-        if (lp, f_stripped, cons, f_has_lp) in exact_map:
-            matched_original_fund = exact_map[(lp, f_stripped, cons, f_has_lp)]
-            fill_color = GREEN
-            flag_value = "Exact"
-            exact_count += 1
-            log_lines.append(f"Row {excel_row} | Exact -> {matched_original_fund}")
-
-        else:
-            # --- Partial match ---
-            candidates = funds_by_lp_cons.get((lp, cons), [])
-            for cand_norm, cand_stripped, cand_has_lp, cand_orig in candidates:
-
-                # Case A: LP/LLC mismatch only — stripped names are identical, LP presence differs
-                if f_stripped and cand_stripped and f_stripped == cand_stripped and f_has_lp != cand_has_lp:
-                    matched_original_fund = cand_orig
-                    fill_color = YELLOW
-                    flag_value = "Partial"
-                    partial_count += 1
-                    log_lines.append(f"Row {excel_row} | Partial (LP mismatch) -> {matched_original_fund}")
-                    break
-
-                # Case B: Word-overlap similarity >= threshold (replaces loose substring match)
-                # Uses stripped names so LP/LLC tokens don't inflate the score
-                similarity = word_jaccard(f_stripped, cand_stripped)
-                if similarity >= PARTIAL_SIMILARITY_THRESHOLD:
-                    matched_original_fund = cand_orig
-                    fill_color = YELLOW
-                    flag_value = "Partial"
-                    partial_count += 1
-                    log_lines.append(
-                        f"Row {excel_row} | Partial (similarity={similarity:.2f}) -> {matched_original_fund}"
-                    )
-                    break
-
-        # --- Write masterentity and flag columns ---
-        if matched_original_fund:
-            ws.cell(row=excel_row, column=masterentity_col).value = matched_original_fund
-            ws.cell(row=excel_row, column=flag_col).value         = flag_value
-        else:
-            ws.cell(row=excel_row, column=masterentity_col).value = ""  # blank for No Match
-            ws.cell(row=excel_row, column=flag_col).value         = "No Match"
-            fill_color = RED
-            no_match_count += 1
-            log_lines.append(f"Row {excel_row} | No Match")
-
-        # --- Apply row highlight ---
-        if fill_color:
-            for col in range(1, ws.max_column + 1):
-                ws.cell(row=excel_row, column=col).fill = fill_color
-
-    elapsed = time.time() - t0
-
-    # ---------- Save workbook into BytesIO ----------
-    result_buffer = BytesIO()
-    wb.save(result_buffer)
-    result_buffer.seek(0)
-
-    # ---------- Stats ----------
-    stats = {
-        "exact":   exact_count,
-        "partial": partial_count,
-        "nomatch": no_match_count,
-        "rows":    total,
-        "elapsed": elapsed,
-        "log_lines": log_lines,
-    }
-
-    return result_buffer, stats
+    # Log expander
+    if stats.get("log_lines"):
+        with st.expander("View recent log lines"):
+            st.text("\n".join(stats["log_lines"][-20:]))
